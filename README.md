@@ -1,22 +1,19 @@
 # ops-orchestrator
 
-A small, **cost-aware multi-agent system for infrastructure ops**. A coordinating
-agent reads a task in plain English, pulls in **only the skills and tools it needs**,
-and executes against your homelab — provisioning Proxmox VMs, managing Dynu and
-Technitium DNS, and so on.
+A **cost-aware multi-agent system for homelab infrastructure ops**. A coordinating
+agent reads a task in plain English, pulls in only the skills and tools it needs,
+and executes against your homelab — provisioning Proxmox VMs, managing DNS, and so on.
 
-> Status: **v0 / actively building.** Architecture is settled; domains are being filled in.
+> Status: **actively building** — core architecture proven, domains being filled in.
 
-## Why it's cheap
-
-The whole design is built around *not* paying for context you aren't using:
+## How it's cheap
 
 | Lever | What it does |
 |---|---|
-| **Deferred tools + tool search** | Every infra tool is marked `defer_loading: true`. Their schemas are **not** in the prompt until the coordinator searches for the one it needs (`tool_search_tool_bm25`). A 50-tool surface costs ~0 tokens at rest. |
-| **Skills (progressive disclosure)** | Each skill (`skills/<name>/SKILL.md`) contributes only a one-line description by default. The full "how to provision a Proxmox VM" body is loaded on demand via the `load_skill` tool. |
-| **Prompt caching** | The stable prefix (system prompt + skill registry) is cached — ~90% off on repeated turns. |
-| **Model tiering** | Coordinator runs on **Sonnet 4.6** for planning; mechanical sub-steps (an IP scan, a single DNS record) run on **Haiku 4.5**. |
+| **Local Ollama first** | Every turn tries your local Ollama instance (e.g. `qwen3:32b`) before calling Claude. Infra reads cost $0. Claude is the automatic fallback when Ollama fails or times out. |
+| **Skills (progressive disclosure)** | Each skill contributes only a one-line description by default. The full procedure loads on demand — you only pay for what the task actually needs. |
+| **Prompt caching** | The stable prefix (system prompt + skill registry) is cached with Claude — ~90% off on repeated turns. |
+| **Destructive-action gate** | Mutating tools (clone, delete, add record) require explicit confirmation before running, preventing accidental expensive or hard-to-reverse actions. |
 
 ## Architecture
 
@@ -24,43 +21,108 @@ The whole design is built around *not* paying for context you aren't using:
   ops-agent "provision a docker host on VLAN 80"
         │
         ▼
-  coordinator (Sonnet 4.6, agentic loop)
-        │  small cached system prompt = skill + tool *descriptions* only
-        ├── load_skill(name)         → injects skills/<name>/SKILL.md on demand
-        ├── tool_search(...)         → surfaces only the matching deferred tools
-        └── MCP servers (stdio, local — creds never leave the box)
-              proxmox/     → clone/configure/start VMs
-              dynu/        → public DNS records
-              technitium/  → internal DNS records
+  ModelRouter  ──► Ollama (qwen3:32b, free, local)
+        │           └─ falls back to Claude on error/timeout
+        ▼
+  Coordinator (agentic loop)
+        │  cached system prompt = skill descriptions only
+        ├── load_skill(name)   → injects full SKILL.md on demand
+        └── MCP servers (stdio, local — credentials never leave the box)
+              proxmox/         → list nodes/VMs, clone, configure, start
+              dynu/            → public DNS records (A, CNAME, TXT…)
+              technitium/      → internal/authoritative DNS records
 ```
 
-Skills hold the *procedure* (the judgment); MCP servers hold the *actions* (the API
-calls). The coordinator composes them.
+Skills hold the *procedure* (judgment + context); MCP servers hold the *actions*
+(the API calls). The coordinator composes them.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-cp config.example.yaml config.yaml      # set models, MCP servers, creds source
-export ANTHROPIC_API_KEY=...            # or use `ant auth login`
-python -m ops_agent.coordinator "add an A record dns.lab.example.com -> 10.0.0.5"
+cp config.example.yaml config.yaml   # set Ollama URL, MCP server hosts, creds
+export ANTHROPIC_API_KEY=...         # Claude fallback key (or `ant auth login`)
+python -m ops_agent.coordinator "list the Proxmox nodes in the cluster"
+```
+
+**Flags:**
+```
+--claude   force Claude for this run (bypass Ollama)
+--yes      auto-approve destructive actions (for automation/scripting)
+```
+
+## MCP servers
+
+| Server | Tools | Notes |
+|---|---|---|
+| `proxmox` | `list_nodes`, `list_vms`, `get_vm_config`, `get_vm_status`, `next_free_vmid`, `clone_template`, `set_vm_config`, `add_disk`, `start_vm`, `wait_for_agent` | Read tools skip the confirm gate via `readOnlyHint` |
+| `dynu` | `list_records`, `add_a_record`, `delete_record` | Public DNS on Dynu |
+| `technitium` | `list_zones`, `list_records`, `add_record`, `delete_record`, `resync_secondary` | Internal/authoritative DNS; read tools skip confirm gate |
+
+## Skills
+
+Skills live in `skills/<name>/SKILL.md` with YAML frontmatter (`name`, `description`).
+Only the description sits in context by default; call `load_skill(name)` to inject the
+full procedure before acting.
+
+| Skill | What it covers |
+|---|---|
+| `provision-proxmox` | Full VM provisioning workflow: pick IP/VMID, clone template, configure, start, run base build |
+| `dynu-dns` | When to use Dynu vs Technitium, how public exposure works, safety notes |
+| `technitium-dns` | Internal authoritative DNS, split-view DNS, secondary resync |
+
+## Configuration
+
+```yaml
+# config.yaml (gitignored — copy from config.example.yaml)
+ollama_url: "http://ollama.example.lan:11434"
+ollama_model: "qwen3:32b"      # or qwen2.5:32b, qwen2.5:14b, llama3.1:8b…
+ollama_timeout: 120
+
+models:
+  coordinator: claude-sonnet-4-6   # Claude fallback
+  worker: claude-haiku-4-5
+
+mcp_servers:
+  - name: proxmox
+    command: ["python", "-m", "mcp_servers.proxmox.server"]
+    env: {PROXMOX_HOST: "proxmox.example.lan", PROXMOX_PASSWORD_ENV: PROXMOX_PASSWORD}
+  - name: dynu
+    command: ["python", "-m", "mcp_servers.dynu.server"]
+    env: {DYNU_API_KEY_ENV: DYNU_API_KEY}
+  - name: technitium
+    command: ["python", "-m", "mcp_servers.technitium.server"]
+    env: {TECHNITIUM_URL: "https://technitium.example.lan", TECHNITIUM_TOKEN_ENV: TECHNITIUM_TOKEN}
+
+confirm_destructive: true   # set false (or use --yes) to skip interactive gate
 ```
 
 ## Layout
 
 ```
-ops_agent/coordinator.py   # the CLI + agentic loop (the 4 cost levers live here)
-ops_agent/skills.py        # skill registry + on-demand loader
-skills/<name>/SKILL.md      # one folder per skill (frontmatter: name, description)
-mcp_servers/<name>/server.py# one stdio MCP server per domain
-config.example.yaml         # models, skill dir, MCP servers, credential source
+ops_agent/
+  coordinator.py   CLI + agentic loop
+  router.py        ModelRouter: Ollama-first, Claude fallback
+  skills.py        skill registry + on-demand loader
+mcp_servers/
+  proxmox/server.py
+  dynu/server.py
+  technitium/server.py
+skills/
+  provision-proxmox/SKILL.md
+  dynu-dns/SKILL.md
+  technitium-dns/SKILL.md
+config.example.yaml
 ```
 
 ## Roadmap
+
 - [x] Architecture + cost-lever wiring
-- [ ] dynu MCP server (in progress) + skill
-- [ ] technitium + proxmox MCP servers + skills
-- [ ] Haiku sub-agent delegation for mechanical steps
-- [ ] reuse ops-central `lib/infra_client.py` (Vault/Proxmox) when present
-- [ ] dry-run / confirm gate for destructive actions
-```
+- [x] Dynu MCP server (public DNS)
+- [x] Technitium MCP server (internal DNS) — read + write tools
+- [x] Proxmox MCP server — 10 tools, read/mutate split
+- [x] Ollama-first model router with automatic Claude fallback
+- [x] Destructive-action confirm gate (`--yes` for automation)
+- [ ] Haiku sub-agent delegation for mechanical steps (#3)
+- [ ] `defer_tools` auto-enable threshold (#5)
+- [ ] Tests + lint CI (#6)

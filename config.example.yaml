@@ -7,7 +7,7 @@ models:
 # Local Ollama — tried first on every turn; Claude is the fallback.
 # Set ollama_url: "" to disable Ollama and always use Claude.
 ollama_url: "http://ollama.example.lan:11434"
-ollama_model: "qwen2.5:32b"        # best tool-calling model; try qwen3:32b for more reasoning
+ollama_model: "qwen3:32b"           # strong reasoning + tool calling; qwen2.5:32b is a reliable alternative
 ollama_timeout: 120                 # seconds before giving up and falling back to Claude
 
 skills_dir: skills
