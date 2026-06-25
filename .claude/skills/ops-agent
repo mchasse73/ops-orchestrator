@@ -11,16 +11,16 @@ shift || true
 
 case "$cmd" in
   list-vms)
-    python -m ops_agent.coordinator /list-vms "$@"
+    .venv/bin/python -m ops_agent.coordinator /list-vms "$@"
     ;;
   list-nodes)
-    python -m ops_agent.coordinator /list-nodes "$@"
+    .venv/bin/python -m ops_agent.coordinator /list-nodes "$@"
     ;;
   next-vmid)
-    python -m ops_agent.coordinator /next-vmid "$@"
+    .venv/bin/python -m ops_agent.coordinator /next-vmid "$@"
     ;;
   provision)
-    python -m ops_agent.coordinator /provision "$@"
+    .venv/bin/python -m ops_agent.coordinator /provision "$@"
     ;;
   help|"")
     cat << 'EOF'
