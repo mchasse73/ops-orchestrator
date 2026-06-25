@@ -67,7 +67,8 @@ def list_records(zone: str, domain: str = "") -> str:
 
 @mcp.tool()
 def add_record(zone: str, domain: str, type: str, value: str, ttl: int = 300) -> str:
-    """Add a record to a primary zone. type is A/AAAA/CNAME/PTR/TXT; value is the address/target."""
+    """Add a record to a primary zone. type is A/AAAA/CNAME/PTR/TXT; value is the address/target.
+    domain must be the FQDN e.g. 'host.example.com' not just 'host'."""
     url, token = _cfg()
     params = {"token": token, "zone": zone, "domain": domain, "type": type, "ttl": ttl}
     params["ipAddress" if type in ("A", "AAAA") else
@@ -80,7 +81,8 @@ def add_record(zone: str, domain: str, type: str, value: str, ttl: int = 300) ->
 
 @mcp.tool()
 def delete_record(zone: str, domain: str, type: str, value: str) -> str:
-    """Delete a record (destructive — confirm first)."""
+    """Delete a record (destructive — confirm first).
+    domain must be the FQDN e.g. 'host.example.com' not just 'host'."""
     url, token = _cfg()
     params = {"token": token, "zone": zone, "domain": domain, "type": type}
     params["ipAddress" if type in ("A", "AAAA") else "value"] = value
