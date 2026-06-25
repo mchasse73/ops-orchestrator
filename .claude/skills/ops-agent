@@ -61,7 +61,7 @@ case "$cmd" in
     echo "==> Building Ubuntu 24.04 golden template on $node (VMID $vmid)..."
     cd packer/ubuntu-2404
     packer init ubuntu-2404.pkr.hcl
-    packer build \
+    packer build -force \
       -var "proxmox_url=https://${PROXMOX_HOST}:8006/api2/json" \
       -var "proxmox_password=${PROXMOX_PASSWORD}" \
       -var "proxmox_node=${node}" \
