@@ -1,0 +1,34 @@
+# ops-orchestrator config — copy to config.yaml and adjust.
+
+models:
+  coordinator: claude-sonnet-4-6   # planning / orchestration
+  worker: claude-haiku-4-5         # cheap mechanical sub-steps (IP scan, single record)
+
+skills_dir: skills
+
+# Deferred tools + tool-search is a SCALE lever: it keeps tool schemas out of context
+# until needed, but adds a search round-trip and breaks prompt caching. With only a
+# handful of tools it costs MORE than plain tools + caching. Turn on once you have
+# dozens of tools across many MCP servers.
+defer_tools: false
+
+# Local MCP servers, launched as stdio subprocesses by the coordinator.
+# Credentials stay on this host — nothing is exposed publicly.
+mcp_servers:
+  - name: dynu
+    command: ["python", "-m", "mcp_servers.dynu.server"]
+    env:
+      DYNU_API_KEY_ENV: DYNU_API_KEY        # the env var holding the key
+  - name: technitium
+    command: ["python", "-m", "mcp_servers.technitium.server"]
+    env:
+      TECHNITIUM_URL: "https://technitium.example.lan"   # your internal DNS server
+      TECHNITIUM_TOKEN_ENV: TECHNITIUM_TOKEN
+  - name: proxmox
+    command: ["python", "-m", "mcp_servers.proxmox.server"]
+    env:
+      PROXMOX_HOST: "proxmox.example.lan"                # your Proxmox node
+      PROXMOX_TOKEN_ENV: PROXMOX_TOKEN
+
+# Safety: actions matching these are confirmed before running (v1).
+confirm_destructive: true

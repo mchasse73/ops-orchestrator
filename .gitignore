@@ -1,0 +1,19 @@
+# live config — has real hosts/IPs; keep local, publish only config.example.yaml
+config.yaml
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# secrets / env — never commit
+.env
+*.key
+*.pem
+secrets/
+*.token
+
+# runtime / logs
+*.log
+/tmp/
