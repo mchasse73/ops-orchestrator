@@ -48,18 +48,40 @@ case "$cmd" in
     setup_vault_password
     .venv/bin/python -m ops_agent.coordinator /provision "$@"
     ;;
+  build-template)
+    setup_vault_password
+    node="${1:-prox1}"
+    # VMID map: prox=9000, prox1=9001, prox2=9002, prox3=9003, prox4=9004
+    declare -A vmid_map=([prox]=9000 [prox1]=9001 [prox2]=9002 [prox3]=9003 [prox4]=9004)
+    vmid="${vmid_map[$node]:-}"
+    if [ -z "$vmid" ]; then
+      echo "ERROR: Unknown node '$node'. Valid: prox prox1 prox2 prox3 prox4" >&2
+      exit 1
+    fi
+    echo "==> Building Ubuntu 24.04 golden template on $node (VMID $vmid)..."
+    cd packer/ubuntu-2404
+    packer init ubuntu-2404.pkr.hcl
+    packer build \
+      -var "proxmox_url=https://${PROXMOX_HOST}:8006/api2/json" \
+      -var "proxmox_password=${PROXMOX_PASSWORD}" \
+      -var "proxmox_node=${node}" \
+      -var "template_vmid=${vmid}" \
+      ubuntu-2404.pkr.hcl
+    ;;
   help|"")
     cat << 'EOF'
 ops-orchestrator commands:
 
-  ops list-vms      List all VMs in the cluster
-  ops list-nodes    Show all Proxmox nodes
-  ops next-vmid     Get the next available VMID
-  ops provision     Provision a new VM (guided)
+  list-vms          List all VMs in the cluster
+  list-nodes        Show all Proxmox nodes
+  next-vmid         Get the next available VMID
+  provision         Provision a new VM (guided)
+  build-template    Build Ubuntu 24.04 golden template on a node
 
 Examples:
-  /ct/ops-orchestrator/.claude/skills/ops-agent list-vms
-  /ct/ops-orchestrator/.claude/skills/ops-agent provision
+  ops-agent list-vms
+  ops-agent provision
+  ops-agent build-template prox1
 EOF
     ;;
   *)
