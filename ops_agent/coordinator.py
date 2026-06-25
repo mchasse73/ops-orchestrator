@@ -26,6 +26,7 @@ from mcp.client.stdio import stdio_client
 
 from .router import ModelRouter
 from .skills import load_skills, registry_block
+from .worker import is_delegatable, run as worker_run
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -192,6 +193,20 @@ async def main(task: str, force_claude: bool = False, auto_yes: bool = False) ->
                             continue
                     r = await sessions[server].call_tool(real, block.input)
                     out = "\n".join(getattr(c, "text", str(c)) for c in r.content)
+                    # worker compression: if this was a Claude turn (costs money),
+                    # the result is long, and the tool is read-only — summarise
+                    # via Haiku before feeding back into the coordinator's context.
+                    worker_model = cfg["models"].get("worker", "")
+                    if (worker_model
+                            and resp.model_used.startswith("claude:")
+                            and len(out) > 400
+                            and is_delegatable(block.name)):
+                        compressed = await asyncio.to_thread(
+                            worker_run, block.name, out, worker_model
+                        )
+                        print(f"  [worker] compressed {len(out)}→{len(compressed)} chars "
+                              f"via {worker_model}", file=sys.stderr)
+                        out = compressed
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": out})
             messages.append({"role": "user", "content": results})
 
