@@ -24,6 +24,7 @@ import yaml
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from .router import ModelRouter
 from .skills import load_skills, registry_block
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -69,11 +70,12 @@ def _confirm(name: str, args: dict) -> bool:
         return False   # non-interactive: deny by default
 
 
-async def main(task: str) -> None:
+async def main(task: str, force_claude: bool = False) -> None:
     cfg = load_config()
     skills = load_skills(ROOT / cfg.get("skills_dir", "skills"))
-    client = anthropic.Anthropic()
-    model = cfg["models"]["coordinator"]
+    router = ModelRouter(cfg)
+    if force_claude:
+        router.ollama_url = ""   # empty URL will fail immediately -> always fallback to Claude
     defer = bool(cfg.get("defer_tools", False))  # scale lever: only wins with many tools
     confirm_destructive = bool(cfg.get("confirm_destructive", True))
 
@@ -132,43 +134,44 @@ async def main(task: str) -> None:
         messages = [{"role": "user", "content": task}]
         usage = {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0}
 
-        def log_usage(u) -> None:
-            usage["in"] += u.input_tokens
-            usage["out"] += u.output_tokens
-            usage["cache_read"] += getattr(u, "cache_read_input_tokens", 0) or 0
-            usage["cache_write"] += getattr(u, "cache_creation_input_tokens", 0) or 0
-            print(f"  [turn usage] in={u.input_tokens} out={u.output_tokens} "
-                  f"cache_read={getattr(u,'cache_read_input_tokens',0)}", file=sys.stderr)
+        def log_usage(resp) -> None:
+            u = resp.usage
+            usage["in"] += u.get("in", 0)
+            usage["out"] += u.get("out", 0)
+            usage["cache_read"] += u.get("cache_read", 0)
+            usage["cache_write"] += u.get("cache_write", 0)
+            print(f"  [turn] model={resp.model_used} in={u.get('in',0)} "
+                  f"out={u.get('out',0)} cache_read={u.get('cache_read',0)}", file=sys.stderr)
 
         def summary() -> None:
+            # only Claude turns cost money
             cost = (usage["in"] * 3 + usage["cache_read"] * 0.3 + usage["cache_write"] * 3.75
                     + usage["out"] * 15) / 1_000_000
-            print(f"\n[total] uncached_in={usage['in']} cache_read={usage['cache_read']} "
-                  f"cache_write={usage['cache_write']} out={usage['out']} "
-                  f"| ~${cost:.5f} (Sonnet rates)", file=sys.stderr)
+            print(f"\n[total] {router.summary()} | claude cost ~${cost:.5f}", file=sys.stderr)
 
         # 4) manual agentic loop
         for _ in range(40):
-            resp = client.messages.create(
-                model=model,
-                max_tokens=8000,
-                thinking={"type": "adaptive"},
-                system=system,
-                tools=tools,
-                messages=messages,
+            resp = await asyncio.to_thread(
+                router.create,
+                system=system, tools=tools, messages=messages, max_tokens=8000,
             )
-            log_usage(resp.usage)
+            log_usage(resp)
             if resp.stop_reason in ("end_turn", "refusal"):
                 print("\n".join(b.text for b in resp.content if b.type == "text"))
                 if resp.stop_reason == "refusal":
-                    print("[refused]", getattr(resp, "stop_details", None))
+                    print("[refused]")
                 summary()
                 return
             if resp.stop_reason == "pause_turn":   # server tool (tool search) still working
                 messages.append({"role": "assistant", "content": resp.content})
                 continue
 
-            messages.append({"role": "assistant", "content": resp.content})
+            # convert Block dataclasses -> plain dicts for the next API call
+            def _serialise(b):
+                if b.type == "text":
+                    return {"type": "text", "text": b.text}
+                return {"type": "tool_use", "id": b.id, "name": b.name, "input": b.input}
+            messages.append({"role": "assistant", "content": [_serialise(b) for b in resp.content]})
             results = []
             for block in resp.content:
                 if block.type != "tool_use":
@@ -194,9 +197,11 @@ async def main(task: str) -> None:
 
 def cli() -> None:
     if len(sys.argv) < 2:
-        print('usage: python -m ops_agent.coordinator "<task>"')
+        print('usage: python -m ops_agent.coordinator [--claude] "<task>"')
         raise SystemExit(2)
-    asyncio.run(main(" ".join(sys.argv[1:])))
+    force_claude = "--claude" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--claude"]
+    asyncio.run(main(" ".join(args), force_claude=force_claude))
 
 
 if __name__ == "__main__":

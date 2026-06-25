@@ -1,8 +1,14 @@
 # ops-orchestrator config — copy to config.yaml and adjust.
 
 models:
-  coordinator: claude-sonnet-4-6   # planning / orchestration
+  coordinator: claude-sonnet-4-6   # Claude fallback model (used when Ollama fails)
   worker: claude-haiku-4-5         # cheap mechanical sub-steps (IP scan, single record)
+
+# Local Ollama — tried first on every turn; Claude is the fallback.
+# Set ollama_url: "" to disable Ollama and always use Claude.
+ollama_url: "http://ollama.example.lan:11434"
+ollama_model: "qwen2.5:32b"        # best tool-calling model; try qwen3:32b for more reasoning
+ollama_timeout: 120                 # seconds before giving up and falling back to Claude
 
 skills_dir: skills
 
