@@ -5,6 +5,19 @@ set -e
 
 cd "$(dirname "$(dirname "$(dirname "$0")")")" || exit 1
 
+# Setup Vault authentication and fetch Proxmox password
+if [ -z "$PROXMOX_PASSWORD" ]; then
+  # Authenticate to Vault if not already authenticated
+  if ! vault token lookup &>/dev/null; then
+    echo "==> Authenticating to Vault..."
+    bash /ct/ops-central/scripts/vault_login.sh
+  fi
+
+  # Fetch Proxmox password from Vault
+  echo "==> Fetching Proxmox credentials from Vault..."
+  export PROXMOX_PASSWORD=$(vault kv get -field=password secret/proxmox/root)
+fi
+
 # Parse the command
 cmd="$1"
 shift || true
