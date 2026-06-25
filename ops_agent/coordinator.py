@@ -113,9 +113,21 @@ async def main(task: str, force_claude: bool = False, auto_yes: bool = False) ->
                     "description": t.description or "",
                     "input_schema": t.inputSchema,
                 }
-                if defer:
-                    td["defer_loading"] = True   # not in context until the model searches for it
+                # note: defer flag is applied after auto-check below
                 tools.append(td)
+
+        # auto-enable defer_tools if tool count exceeds threshold
+        auto_defer_threshold = cfg.get("auto_defer_tool_count", 0)
+        if auto_defer_threshold and len(tools) >= auto_defer_threshold and not cfg.get("defer_tools"):
+            defer = True
+            print(f"[router] auto-enabling defer_tools: {len(tools)} tools >= {auto_defer_threshold} threshold",
+                  file=sys.stderr)
+
+        # apply defer_loading to MCP tools if defer is enabled
+        if defer:
+            for td in tools:
+                if "__" in td["name"]:  # MCP tools have "server__toolname" format
+                    td["defer_loading"] = True
 
         # 2) local tool: progressive disclosure of skills (never deferred — core + cheap)
         tools.append({
