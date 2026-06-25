@@ -47,13 +47,13 @@ variable "template_name" {
 variable "ubuntu_iso_url" {
   description = "URL to Ubuntu 24.04 server ISO"
   type        = string
-  default     = "https://releases.ubuntu.com/24.04/ubuntu-24.04.2-live-server-amd64.iso"
+  default     = "https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso"
 }
 
 variable "ubuntu_iso_checksum" {
   description = "SHA256 of the ISO"
   type        = string
-  default     = "sha256:d6dab0c3a657a0f6e86c62addc8cc2e155e28b7b7a7c0e40e85e0cd65df20e56"
+  default     = "sha256:e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433"
 }
 
 # ── Build ──────────────────────────────────────────────────────────────────────
