@@ -1,6 +1,19 @@
 ---
 name: provision-proxmox
 description: Provision a Proxmox VM from a golden template (clone, set IP/VLAN/resources, start, base config).
+commands:
+  - name: list-vms
+    description: Show all VMs in the cluster
+    expands_to: "List all VMs across the cluster with their status and node assignment."
+  - name: list-nodes
+    description: Show all Proxmox nodes
+    expands_to: "List all Proxmox cluster nodes with their status and resource usage."
+  - name: next-vmid
+    description: Get the next available VMID
+    expands_to: "What is the next available VMID in the cluster?"
+  - name: provision
+    description: Provision a new VM (guided)
+    expands_to: "Provision a new Proxmox VM. Ask me: target node, hostname, VLAN, IP (or auto-assign), cores, memory (GB), disk size (GB). Follow the provision-proxmox skill procedure."
 ---
 
 # Provision a Proxmox VM
