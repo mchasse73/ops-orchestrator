@@ -18,6 +18,11 @@ skills_dir: skills
 # dozens of tools across many MCP servers.
 defer_tools: false
 
+# Auto-enable defer_tools when tool count exceeds this threshold (if not explicitly set).
+# Measured: 7 tools = defer costs MORE ($0.040 vs $0.029). ~20 tools is the crossover.
+# Set to 0 to disable auto-enable (always respect explicit config).
+auto_defer_tool_count: 20
+
 # Local MCP servers, launched as stdio subprocesses by the coordinator.
 # Credentials stay on this host — nothing is exposed publicly.
 mcp_servers:
