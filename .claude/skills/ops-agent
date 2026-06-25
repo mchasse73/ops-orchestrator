@@ -9,8 +9,9 @@ cd "$(dirname "$(dirname "$(dirname "$0")")")" || exit 1
 if [ -z "$PROXMOX_PASSWORD" ]; then
   # Authenticate to Vault if not already authenticated
   if ! vault token lookup &>/dev/null; then
-    echo "==> Authenticating to Vault..."
-    bash /ct/ops-central/scripts/vault_login.sh
+    echo "==> Authenticating to Vault (AppRole)..."
+    # Use AppRole auth for headless environments (SSH, CI/CD)
+    source /ct/ops-central/scripts/beast-vault-login.sh || exit 1
   fi
 
   # Fetch Proxmox password from Vault
