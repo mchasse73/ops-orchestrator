@@ -5,35 +5,43 @@ set -e
 
 cd "$(dirname "$(dirname "$(dirname "$0")")")" || exit 1
 
-# Setup Vault authentication and fetch Proxmox password
-if [ -z "$PROXMOX_PASSWORD" ]; then
-  # Authenticate to Vault if not already authenticated
-  if ! vault token lookup &>/dev/null; then
-    echo "==> Authenticating to Vault (AppRole)..."
-    # Use AppRole auth for headless environments (SSH, CI/CD)
-    source /ct/ops-central/scripts/beast-vault-login.sh || exit 1
+# Parse the command first (before Vault auth)
+cmd="${1:-}"
+[ -n "$cmd" ] && shift || true
+
+# Setup Vault authentication and fetch Proxmox password (only for actual commands)
+setup_vault_password() {
+  if [ -z "$PROXMOX_PASSWORD" ]; then
+    # Authenticate to Vault if not already authenticated
+    if ! vault token lookup &>/dev/null; then
+      echo "==> Authenticating to Vault (AppRole)..."
+      # Use AppRole auth for headless environments (SSH, CI/CD)
+      source /ct/ops-central/scripts/beast-vault-login.sh || exit 1
+    fi
+
+    # Fetch Proxmox password from Vault
+    echo "==> Fetching Proxmox credentials from Vault..."
+    if ! export PROXMOX_PASSWORD=$(vault kv get -field=password secret/proxmox/root 2>/dev/null); then
+      echo "WARNING: Could not fetch PROXMOX_PASSWORD from Vault. Continuing without it." >&2
+    fi
   fi
-
-  # Fetch Proxmox password from Vault
-  echo "==> Fetching Proxmox credentials from Vault..."
-  export PROXMOX_PASSWORD=$(vault kv get -field=password secret/proxmox/root)
-fi
-
-# Parse the command
-cmd="$1"
-shift || true
+}
 
 case "$cmd" in
   list-vms)
+    setup_vault_password
     .venv/bin/python -m ops_agent.coordinator /list-vms "$@"
     ;;
   list-nodes)
+    setup_vault_password
     .venv/bin/python -m ops_agent.coordinator /list-nodes "$@"
     ;;
   next-vmid)
+    setup_vault_password
     .venv/bin/python -m ops_agent.coordinator /next-vmid "$@"
     ;;
   provision)
+    setup_vault_password
     .venv/bin/python -m ops_agent.coordinator /provision "$@"
     ;;
   help|"")
@@ -46,13 +54,13 @@ ops-orchestrator commands:
   ops provision     Provision a new VM (guided)
 
 Examples:
-  ! ops list-vms
-  ! ops provision
+  /ct/ops-orchestrator/.claude/skills/ops-agent list-vms
+  /ct/ops-orchestrator/.claude/skills/ops-agent provision
 EOF
     ;;
   *)
     echo "Unknown command: $cmd" >&2
-    echo "Run 'ops help' for available commands" >&2
+    echo "Run 'ops-agent help' for available commands" >&2
     exit 1
     ;;
 esac
