@@ -25,10 +25,10 @@ def test_parse_command_line_no_command():
     assert extra == "list all VMs"
 
 
-def test_parse_command_line_help():
-    """Parse /help."""
-    cmd, extra = parse_command_line("/help")
-    assert cmd == "help"
+def test_parse_command_line_commands():
+    """Parse /commands."""
+    cmd, extra = parse_command_line("/commands")
+    assert cmd == "commands"
     assert extra == ""
 
 

@@ -242,7 +242,7 @@ def cli() -> None:
     # check if input is a command
     cmd_name, extra_args = parse_command_line(task_input)
     if cmd_name:
-        if cmd_name == "help":
+        if cmd_name == "commands":
             print(help_text(commands))
             return
         expanded = expand_command(cmd_name, commands, extra_args)
