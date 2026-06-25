@@ -19,10 +19,14 @@ setup_vault_password() {
       source /ct/ops-central/scripts/beast-vault-login.sh || exit 1
     fi
 
-    # Fetch Proxmox password from Vault
+    # Fetch Proxmox credentials from Vault
     echo "==> Fetching Proxmox credentials from Vault..."
-    if ! export PROXMOX_PASSWORD=$(vault kv get -field=password secret/proxmox/root 2>/dev/null); then
-      echo "WARNING: Could not fetch PROXMOX_PASSWORD from Vault. Continuing without it." >&2
+    export PROXMOX_PASSWORD=$(vault kv get -field=password secret/proxmox 2>/dev/null)
+    export PROXMOX_HOST=$(vault kv get -field=api_host_1 secret/proxmox 2>/dev/null)
+    export PROXMOX_USER=$(vault kv get -field=username secret/proxmox 2>/dev/null)
+    if [ -z "$PROXMOX_PASSWORD" ]; then
+      echo "ERROR: Could not fetch PROXMOX_PASSWORD from Vault (secret/proxmox)." >&2
+      exit 1
     fi
   fi
 }
