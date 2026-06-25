@@ -24,6 +24,7 @@ import yaml
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from .commands import help_text, load_commands, parse_command_line, expand_command
 from .router import ModelRouter
 from .skills import load_skills, registry_block
 from .worker import is_delegatable, run as worker_run
@@ -215,12 +216,32 @@ async def main(task: str, force_claude: bool = False, auto_yes: bool = False) ->
 
 def cli() -> None:
     if len(sys.argv) < 2:
-        print('usage: python -m ops_agent.coordinator [--claude] [--yes] "<task>"')
+        print('usage: python -m ops_agent.coordinator [--claude] [--yes] [/<command>] "<task>"')
         raise SystemExit(2)
     force_claude = "--claude" in sys.argv
     auto_yes = "--yes" in sys.argv
     args = [a for a in sys.argv[1:] if a not in ("--claude", "--yes")]
-    asyncio.run(main(" ".join(args), force_claude=force_claude, auto_yes=auto_yes))
+    task_input = " ".join(args)
+
+    # load commands from skills
+    cfg = load_config()
+    commands = load_commands(ROOT / cfg.get("skills_dir", "skills"))
+
+    # check if input is a command
+    cmd_name, extra_args = parse_command_line(task_input)
+    if cmd_name:
+        if cmd_name == "help":
+            print(help_text(commands))
+            return
+        expanded = expand_command(cmd_name, commands, extra_args)
+        if expanded:
+            task_input = expanded
+        else:
+            print(f"unknown command: /{cmd_name}")
+            print(help_text(commands))
+            raise SystemExit(1)
+
+    asyncio.run(main(task_input, force_claude=force_claude, auto_yes=auto_yes))
 
 
 if __name__ == "__main__":
