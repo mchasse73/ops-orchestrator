@@ -62,15 +62,18 @@ def _tool_mutating(tool) -> bool:
     return not tool.name.lower().startswith(READONLY_PREFIXES)
 
 
-def _confirm(name: str, args: dict) -> bool:
+def _confirm(name: str, args: dict, auto_yes: bool = False) -> bool:
     print(f"\n⚠️  MUTATING action requested: {name}\n    args: {json.dumps(args)}", file=sys.stderr)
+    if auto_yes:
+        print("    [--yes] auto-approved", file=sys.stderr)
+        return True
     try:
         return input("    Proceed? [y/N] ").strip().lower() in ("y", "yes")
     except EOFError:
-        return False   # non-interactive: deny by default
+        return False   # non-interactive without --yes: deny by default
 
 
-async def main(task: str, force_claude: bool = False) -> None:
+async def main(task: str, force_claude: bool = False, auto_yes: bool = False) -> None:
     cfg = load_config()
     skills = load_skills(ROOT / cfg.get("skills_dir", "skills"))
     router = ModelRouter(cfg)
@@ -182,7 +185,7 @@ async def main(task: str, force_claude: bool = False) -> None:
                 else:
                     server, real = tool_owner[block.name]
                     if confirm_destructive and tool_mutating.get(block.name):
-                        if not await asyncio.to_thread(_confirm, block.name, block.input):
+                        if not await asyncio.to_thread(_confirm, block.name, block.input, auto_yes):
                             results.append({"type": "tool_result", "tool_use_id": block.id,
                                             "content": "Operator DECLINED this action. Do not retry it; "
                                                        "pick a different approach or ask what to do."})
@@ -197,11 +200,12 @@ async def main(task: str, force_claude: bool = False) -> None:
 
 def cli() -> None:
     if len(sys.argv) < 2:
-        print('usage: python -m ops_agent.coordinator [--claude] "<task>"')
+        print('usage: python -m ops_agent.coordinator [--claude] [--yes] "<task>"')
         raise SystemExit(2)
     force_claude = "--claude" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--claude"]
-    asyncio.run(main(" ".join(args), force_claude=force_claude))
+    auto_yes = "--yes" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ("--claude", "--yes")]
+    asyncio.run(main(" ".join(args), force_claude=force_claude, auto_yes=auto_yes))
 
 
 if __name__ == "__main__":
