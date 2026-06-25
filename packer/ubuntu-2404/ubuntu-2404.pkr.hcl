@@ -69,10 +69,10 @@ source "proxmox-iso" "ubuntu-2404" {
   vm_name = var.template_name
   tags    = "template;ubuntu;golden"
 
-  # ISO
+  # ISO — Ubuntu 24.04.4 LTS
   boot_iso {
-    iso_url          = var.ubuntu_iso_url
-    iso_checksum     = var.ubuntu_iso_checksum
+    iso_url          = "https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso"
+    iso_checksum     = "sha256:e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433"
     iso_storage_pool = "local"
     unmount          = true
   }
