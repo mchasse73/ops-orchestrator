@@ -19,14 +19,12 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
 import httpx
-
 
 # ── normalised response (coordinator-facing) ──────────────────────────────────
 
@@ -130,8 +128,8 @@ def _from_openai_response(resp: dict, model: str) -> NormResponse:
             fn = tc["function"]
             try:
                 args = json.loads(fn["arguments"])
-            except json.JSONDecodeError:
-                raise ValueError(f"malformed tool-call JSON from Ollama: {fn['arguments'][:120]}")
+            except json.JSONDecodeError as e:
+                raise ValueError(f"malformed tool-call JSON from Ollama: {fn['arguments'][:120]}") from e
             blocks.append(Block(
                 type="tool_use",
                 id=tc.get("id") or f"ollama_{uuid.uuid4().hex[:8]}",
