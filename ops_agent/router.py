@@ -163,6 +163,8 @@ class ModelRouter:
     # public API the coordinator calls
     def create(self, *, system: list[dict], tools: list[dict],
                messages: list[dict], max_tokens: int = 8000) -> NormResponse:
+        if not self.ollama_url:   # --claude flag or empty config → skip Ollama silently
+            return self._claude(system, tools, messages, max_tokens)
         try:
             return self._ollama(system, tools, messages, max_tokens)
         except Exception as exc:
