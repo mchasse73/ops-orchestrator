@@ -1,0 +1,17 @@
+# Ruff linting configuration
+line-length = 100
+
+[lint]
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # Pyflakes
+  "I",    # isort (import sorting)
+  "B",    # flake8-bugbear
+]
+ignore = [
+  "E501",  # line too long
+]
+
+[lint.isort]
+known-first-party = ["ops_agent"]

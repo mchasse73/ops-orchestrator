@@ -19,15 +19,15 @@ import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-import anthropic
 import yaml
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from .commands import help_text, load_commands, parse_command_line, expand_command
+from .commands import expand_command, help_text, load_commands, parse_command_line
 from .router import ModelRouter
 from .skills import load_skills, registry_block
-from .worker import is_delegatable, run as worker_run
+from .worker import is_delegatable
+from .worker import run as worker_run
 
 ROOT = Path(__file__).resolve().parent.parent
 
