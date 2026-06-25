@@ -1,0 +1,44 @@
+#!/bin/bash
+# ops-orchestrator CLI wrapper for Claude Code
+
+set -e
+
+cd "$(dirname "$(dirname "$(dirname "$0")")")" || exit 1
+
+# Parse the command
+cmd="$1"
+shift || true
+
+case "$cmd" in
+  list-vms)
+    python -m ops_agent.coordinator /list-vms "$@"
+    ;;
+  list-nodes)
+    python -m ops_agent.coordinator /list-nodes "$@"
+    ;;
+  next-vmid)
+    python -m ops_agent.coordinator /next-vmid "$@"
+    ;;
+  provision)
+    python -m ops_agent.coordinator /provision "$@"
+    ;;
+  help|"")
+    cat << 'EOF'
+ops-orchestrator commands:
+
+  ops list-vms      List all VMs in the cluster
+  ops list-nodes    Show all Proxmox nodes
+  ops next-vmid     Get the next available VMID
+  ops provision     Provision a new VM (guided)
+
+Examples:
+  ! ops list-vms
+  ! ops provision
+EOF
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    echo "Run 'ops help' for available commands" >&2
+    exit 1
+    ;;
+esac
