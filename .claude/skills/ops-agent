@@ -50,23 +50,93 @@ case "$cmd" in
     ;;
   build-template)
     setup_vault_password
-    node="${1:-prox1}"
-    # VMID map: prox=9000, prox1=9001, prox2=9002, prox3=9003, prox4=9004
-    declare -A vmid_map=([prox]=9000 [prox1]=9001 [prox2]=9002 [prox3]=9003 [prox4]=9004)
-    vmid="${vmid_map[$node]:-}"
-    if [ -z "$vmid" ]; then
+
+    # Node selection
+    node="${1:-}"
+    if [ -z "$node" ]; then
+      echo "Available nodes: prox  prox1  prox2  prox3  prox4"
+      read -r -p "Target node [prox1]: " node
+      node="${node:-prox1}"
+    fi
+
+    declare -A node_check=([prox]=1 [prox1]=1 [prox2]=1 [prox3]=1 [prox4]=1)
+    if [ -z "${node_check[$node]:-}" ]; then
       echo "ERROR: Unknown node '$node'. Valid: prox prox1 prox2 prox3 prox4" >&2
       exit 1
     fi
-    echo "==> Building Ubuntu 24.04 golden template on $node (VMID $vmid)..."
-    cd packer/ubuntu-2404
-    packer init ubuntu-2404.pkr.hcl
+
+    # Version selection
+    version="${2:-}"
+    if [ -z "$version" ]; then
+      echo ""
+      echo "Available Ubuntu versions:"
+      echo "  24.04  — Ubuntu 24.04 LTS Noble     VMID 9000  [recommended, LTS]"
+      echo "  25.10  — Ubuntu 25.10 Questing       VMID 9100"
+      echo "  26.04  — Ubuntu 26.04 LTS            VMID 9200  [latest LTS]"
+      read -r -p "Ubuntu version [24.04]: " version
+      version="${version:-24.04}"
+    fi
+
+    # Version config — one template per version, single VMID across cluster
+    # VMID scheme: 9000=24.04 LTS, 9100=25.10, 9200=26.04 LTS, ...
+    case "$version" in
+      24.04)
+        iso_url="https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso"
+        iso_checksum="sha256:e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433"
+        vmid=9000
+        autoinstall_dir="ubuntu-2404/http"
+        template_name="ubuntu-2404-golden"
+        ;;
+      25.10)
+        iso_url="https://releases.ubuntu.com/25.10/ubuntu-25.10-live-server-amd64.iso"
+        iso_checksum="sha256:dc54870e5261c0abad19f74b8146659d10e625971792bd42d7ecde820b60a1d0"
+        vmid=9100
+        autoinstall_dir="ubuntu-2404/http"
+        template_name="ubuntu-2510-golden"
+        ;;
+      26.04)
+        iso_url="https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso"
+        iso_checksum="sha256:dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9"
+        vmid=9200
+        autoinstall_dir="ubuntu-2404/http"
+        template_name="ubuntu-2604-golden"
+        ;;
+      *)
+        echo "ERROR: Unknown version '$version'." >&2
+        echo "       Supported: 24.04  25.10  26.04" >&2
+        exit 1
+        ;;
+    esac
+
+    echo ""
+    echo "==> Build plan:"
+    echo "    Node:     $node (build host only — template cloneable to any node)"
+    echo "    Version:  Ubuntu $version"
+    echo "    VMID:     $vmid"
+    echo "    Template: $template_name"
+    echo "    ISO:      $(basename $iso_url)"
+    echo "    Storage:  prox-iso (shared NAS — ISO uploaded once, reused by all nodes)"
+    echo ""
+    read -r -p "Proceed? [Y/n]: " confirm
+    confirm="${confirm:-Y}"
+    if [[ ! "$confirm" =~ ^[Yy] ]]; then
+      echo "Aborted."
+      exit 0
+    fi
+
+    echo "==> Building..."
+    cd packer
+    packer init ubuntu.pkr.hcl
     packer build -force \
       -var "proxmox_url=https://${PROXMOX_HOST}:8006/api2/json" \
       -var "proxmox_password=${PROXMOX_PASSWORD}" \
       -var "proxmox_node=${node}" \
       -var "template_vmid=${vmid}" \
-      ubuntu-2404.pkr.hcl
+      -var "template_name=${template_name}" \
+      -var "iso_url=${iso_url}" \
+      -var "iso_checksum=${iso_checksum}" \
+      -var "autoinstall_dir=${autoinstall_dir}" \
+      ubuntu.pkr.hcl
     ;;
   help|"")
     cat << 'EOF'
@@ -76,12 +146,18 @@ ops-orchestrator commands:
   list-nodes        Show all Proxmox nodes
   next-vmid         Get the next available VMID
   provision         Provision a new VM (guided)
-  build-template    Build Ubuntu 24.04 golden template on a node
+  build-template    Build an Ubuntu golden template on a Proxmox node
+
+Ubuntu versions:  24.04 (LTS, VMID 9000)  25.10 (VMID 9100)  26.04 (LTS, VMID 9200)
+ISO storage:      prox-iso shared NAS — uploaded once, reused by all nodes
 
 Examples:
   ops-agent list-vms
   ops-agent provision
-  ops-agent build-template prox1
+  ops-agent build-template                  # interactive prompts for node + version
+  ops-agent build-template prox1            # prompts for version only
+  ops-agent build-template prox1 24.04      # fully specified, no prompts
+  ops-agent build-template prox1 26.04      # build latest LTS on prox1
 EOF
     ;;
   *)

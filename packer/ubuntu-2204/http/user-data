@@ -1,0 +1,73 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+
+  # Network — DHCP during install only; cloud-init sets static IP at deploy time
+  network:
+    version: 2
+    ethernets:
+      ens18:
+        dhcp4: true
+
+  # Storage — single root partition, no LVM, ext4
+  storage:
+    layout:
+      name: direct
+    swap:
+      size: 0
+
+  # Initial user (Packer uses this to SSH in and run provisioners)
+  identity:
+    hostname: ubuntu-template
+    username: mchasse
+    # Password: ChangeMe! — SSH key login only in production; this allows console access
+    password: "$6$rounds=4096$salt$changeme"
+
+  # SSH — enable and add all authorized keys
+  ssh:
+    install-server: true
+    authorized-keys:
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJVg90BaM7cOzLTseb21By9Js6P83jtsdARzpkMt4UrM mchasse@xnitro"
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDGfsIvIbq+jJRBkh0Bisluz+LX4NRDrD2dZcQmQpGZz"
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGYrV9NK/7kMb64PycxuqTWduQ1WESKJmWieuOKBzacZ mchasse@storm"
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDOIbTIyU3tFeAm2g6L2/lheTc6pg3Ogiof9KuJHbETj mchasse@xeronine.com"
+      - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFvNQTfctGIgfAjNsylR+aoLb+CaDLqKAGdl7KcxaG1W mchasse@beast"
+    allow-pw: false
+
+  # Packages installed during OS install phase
+  packages:
+    - qemu-guest-agent
+    - cloud-init
+    - cloud-utils
+    - curl
+    - wget
+    - git
+    - vim
+    - htop
+    - net-tools
+    - unzip
+    - apt-transport-https
+    - ca-certificates
+    - gnupg
+    - lsb-release
+    - python3
+    - python3-pip
+    - python3-venv
+    - nfs-common
+    - ufw
+    - fail2ban
+
+  # Final steps before reboot
+  late-commands:
+    # Enable qemu-guest-agent so Proxmox can see the IP
+    - curtin in-target --target=/target -- systemctl enable qemu-guest-agent
+    # Ensure cloud-init runs on next boot (the template clean runs after Packer SSH)
+    - curtin in-target --target=/target -- systemctl enable cloud-init
+
+  # Reboot after install so Packer can SSH in
+  user-data:
+    runcmd:
+      - systemctl start qemu-guest-agent

@@ -17,3 +17,8 @@ secrets/
 # runtime / logs
 *.log
 /tmp/
+
+# packer ISO cache — large binary files, never commit
+packer/**/downloaded_iso_path/
+packer/**/*.iso
+packer/**/*.iso.lock
