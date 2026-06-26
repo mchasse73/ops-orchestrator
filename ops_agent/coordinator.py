@@ -24,6 +24,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from .commands import expand_command, help_text, load_commands, parse_command_line
+from .mempalace import MemPalaceClient
 from .router import ModelRouter
 from .skills import load_skills, registry_block
 from .worker import is_delegatable
@@ -84,6 +85,14 @@ async def main(task: str, force_claude: bool = False, auto_yes: bool = False) ->
     defer = bool(cfg.get("defer_tools", False))  # scale lever: only wins with many tools
     confirm_destructive = bool(cfg.get("confirm_destructive", True))
 
+    # MemPalace — query for prior context, save facts at end
+    mp_url = cfg.get("mempalace_url", "")
+    mp = MemPalaceClient(mp_url, cfg.get("mempalace_wing", "ops_central")) if mp_url else None
+    mp_context = ""
+    if mp:
+        print("  [mempalace] querying for prior context...", file=sys.stderr)
+        mp_context = mp.context_for_task(task)
+
     async with AsyncExitStack() as stack:
         # 1) connect to each local MCP server (creds stay on this host)
         sessions: dict[str, ClientSession] = {}
@@ -143,9 +152,12 @@ async def main(task: str, force_claude: bool = False, auto_yes: bool = False) ->
         if defer and tools:
             tools.append({"type": "tool_search_tool_bm25_20251119", "name": "tool_search_tool_bm25"})
 
+        system_text = SYSTEM + "\n\n" + registry_block(skills)
+        if mp_context:
+            system_text += "\n\n" + mp_context
         system = [{
             "type": "text",
-            "text": SYSTEM + "\n\n" + registry_block(skills),
+            "text": system_text,
             "cache_control": {"type": "ephemeral"},   # lever 3: cache the stable prefix
         }]
         messages = [{"role": "user", "content": task}]
@@ -174,10 +186,14 @@ async def main(task: str, force_claude: bool = False, auto_yes: bool = False) ->
             )
             log_usage(resp)
             if resp.stop_reason in ("end_turn", "refusal"):
-                print("\n".join(b.text for b in resp.content if b.type == "text"))
+                final_text = "\n".join(b.text for b in resp.content if b.type == "text")
+                print(final_text)
                 if resp.stop_reason == "refusal":
                     print("[refused]")
                 summary()
+                # Save outcome to MemPalace for future sessions
+                if mp and final_text:
+                    await asyncio.to_thread(mp.save_run_facts, task, final_text[:500])
                 return
             if resp.stop_reason == "pause_turn":   # server tool (tool search) still working
                 messages.append({"role": "assistant", "content": resp.content})
