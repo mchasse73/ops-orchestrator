@@ -67,26 +67,67 @@ async def _stream_task(task: str, yes: bool = False, claude: bool = False) -> As
         args.append("--yes")
     args.append(task)
 
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(ROOT),
+        env=env,
     )
 
-    # Stream stdout lines as SSE events
-    assert proc.stdout
-    async for raw in proc.stdout:
-        line = raw.decode(errors="replace").rstrip()
-        if line:
-            yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
+    # Stream stdout and stderr concurrently as SSE events
+    assert proc.stdout and proc.stderr
 
-    # Collect any stderr (model/cost info)
-    assert proc.stderr
-    stderr = await proc.stderr.read()
-    for line in stderr.decode(errors="replace").splitlines():
-        if line.strip():
-            yield f"data: {json.dumps({'type': 'meta', 'text': line})}\n\n"
+    async def read_stream(stream, event_type: str):
+        async for raw in stream:
+            line = raw.decode(errors="replace").rstrip()
+            if line:
+                yield f"data: {json.dumps({'type': event_type, 'text': line})}\n\n"
+
+    # Merge stdout (output) and stderr (meta) into a single stream
+    import asyncio as _asyncio
+
+    stdout_q: asyncio.Queue = asyncio.Queue()
+    stderr_q: asyncio.Queue = asyncio.Queue()
+    DONE = object()
+
+    async def drain(stream, q):
+        async for raw in stream:
+            line = raw.decode(errors="replace").rstrip()
+            if line:
+                await q.put(line)
+        await q.put(DONE)
+
+    out_task = asyncio.create_task(drain(proc.stdout, stdout_q))
+    err_task = asyncio.create_task(drain(proc.stderr, stderr_q))
+
+    out_done = err_done = False
+    while not (out_done and err_done):
+        # Check stdout
+        if not out_done:
+            try:
+                item = stdout_q.get_nowait()
+                if item is DONE:
+                    out_done = True
+                else:
+                    yield f"data: {json.dumps({'type': 'output', 'text': item})}\n\n"
+                continue
+            except asyncio.QueueEmpty:
+                pass
+        # Check stderr
+        if not err_done:
+            try:
+                item = stderr_q.get_nowait()
+                if item is DONE:
+                    err_done = True
+                else:
+                    yield f"data: {json.dumps({'type': 'meta', 'text': item})}\n\n"
+                continue
+            except asyncio.QueueEmpty:
+                pass
+        # Nothing ready — yield to event loop briefly
+        await asyncio.sleep(0.05)
 
     await proc.wait()
     yield f"data: {json.dumps({'type': 'done', 'exit_code': proc.returncode})}\n\n"
