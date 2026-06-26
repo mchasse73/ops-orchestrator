@@ -76,58 +76,52 @@ async def _stream_task(task: str, yes: bool = False, claude: bool = False) -> As
         env=env,
     )
 
-    # Stream stdout and stderr concurrently as SSE events
+    # Merge stdout + stderr into a single pipe — simplest reliable streaming
     assert proc.stdout and proc.stderr
 
-    async def read_stream(stream, event_type: str):
-        async for raw in stream:
-            line = raw.decode(errors="replace").rstrip()
-            if line:
-                yield f"data: {json.dumps({'type': event_type, 'text': line})}\n\n"
+    async def iter_lines():
+        """Yield (stream_type, line) as lines arrive from either pipe."""
+        import asyncio
 
-    # Merge stdout (output) and stderr (meta) into a single stream
-    import asyncio as _asyncio
-
-    stdout_q: asyncio.Queue = asyncio.Queue()
-    stderr_q: asyncio.Queue = asyncio.Queue()
-    DONE = object()
-
-    async def drain(stream, q):
-        async for raw in stream:
-            line = raw.decode(errors="replace").rstrip()
-            if line:
-                await q.put(line)
-        await q.put(DONE)
-
-    out_task = asyncio.create_task(drain(proc.stdout, stdout_q))
-    err_task = asyncio.create_task(drain(proc.stderr, stderr_q))
-
-    out_done = err_done = False
-    while not (out_done and err_done):
-        # Check stdout
-        if not out_done:
+        async def read_one(coro):
             try:
-                item = stdout_q.get_nowait()
-                if item is DONE:
-                    out_done = True
+                return await coro
+            except Exception:
+                return None
+
+        out_eof = err_eof = False
+        while not (out_eof and err_eof):
+            tasks = {}
+            if not out_eof:
+                tasks["out"] = asyncio.ensure_future(proc.stdout.readline())
+            if not err_eof:
+                tasks["err"] = asyncio.ensure_future(proc.stderr.readline())
+
+            done, _ = await asyncio.wait(
+                tasks.values(), return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for future in done:
+                raw = future.result()
+                key = next(k for k, v in tasks.items() if v is future)
+                if not raw:
+                    if key == "out":
+                        out_eof = True
+                    else:
+                        err_eof = True
                 else:
-                    yield f"data: {json.dumps({'type': 'output', 'text': item})}\n\n"
-                continue
-            except asyncio.QueueEmpty:
-                pass
-        # Check stderr
-        if not err_done:
-            try:
-                item = stderr_q.get_nowait()
-                if item is DONE:
-                    err_done = True
-                else:
-                    yield f"data: {json.dumps({'type': 'meta', 'text': item})}\n\n"
-                continue
-            except asyncio.QueueEmpty:
-                pass
-        # Nothing ready — yield to event loop briefly
-        await asyncio.sleep(0.05)
+                    line = raw.decode(errors="replace").rstrip()
+                    if line:
+                        yield key, line
+
+            # Cancel any pending tasks to avoid leaks
+            for future in tasks.values():
+                if future not in done:
+                    future.cancel()
+
+    async for stream_type, line in iter_lines():
+        event_type = "output" if stream_type == "out" else "meta"
+        yield f"data: {json.dumps({'type': event_type, 'text': line})}\n\n"
 
     await proc.wait()
     yield f"data: {json.dumps({'type': 'done', 'exit_code': proc.returncode})}\n\n"
