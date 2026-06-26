@@ -51,16 +51,18 @@ case "$cmd" in
   build-template)
     setup_vault_password
 
-    # Node selection
+    # Node selection (default prox2 — hosts the NFS storage, avoids cross-node copies)
     node="${1:-}"
     if [ -z "$node" ]; then
       echo "Available nodes: prox  prox1  prox2  prox3  prox4"
-      read -r -p "Target node [prox1]: " node
-      node="${node:-prox1}"
+      read -r -p "Target node [prox2]: " node
+      node="${node:-prox2}"
     fi
 
-    declare -A node_check=([prox]=1 [prox1]=1 [prox2]=1 [prox3]=1 [prox4]=1)
-    if [ -z "${node_check[$node]:-}" ]; then
+    # Map node name to IP
+    declare -A node_ip=([prox]=10.200.99.5 [prox1]=10.200.99.7 [prox2]=10.200.99.8 [prox3]=10.200.99.4 [prox4]=10.200.99.10)
+    node_host="${node_ip[$node]:-}"
+    if [ -z "$node_host" ]; then
       echo "ERROR: Unknown node '$node'. Valid: prox prox1 prox2 prox3 prox4" >&2
       exit 1
     fi
@@ -70,77 +72,91 @@ case "$cmd" in
     if [ -z "$version" ]; then
       echo ""
       echo "Available Ubuntu versions:"
-      echo "  24.04  — Ubuntu 24.04 LTS Noble     VMID 9000  [recommended, LTS]"
-      echo "  25.10  — Ubuntu 25.10 Questing       VMID 9100"
-      echo "  26.04  — Ubuntu 26.04 LTS            VMID 9200  [latest LTS]"
+      echo "  24.04  — Ubuntu 24.04 LTS Noble (VMID 9000)  [recommended]"
+      echo "  25.10  — Ubuntu 25.10 Questing   (VMID 9500)"
+      echo "  26.04  — Ubuntu 26.04 LTS         (VMID 9200)"
       read -r -p "Ubuntu version [24.04]: " version
       version="${version:-24.04}"
     fi
 
-    # Version config — one template per version, single VMID across cluster
-    # VMID scheme: 9000=24.04 LTS, 9500=25.10 (9100 taken by slayerrealms-amp), 9200=26.04 LTS
+    # Version → cloud image URL + VMID + template name
     case "$version" in
-      24.04)
-        iso_url="https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso"
-        iso_checksum="sha256:e907d92eeec9df64163a7e454cbc8d7755e8ddc7ed42f99dbc80c40f1a138433"
-        vmid=9000
-        autoinstall_dir="ubuntu-2404/http"
-        template_name="ubuntu-2404-golden"
-        ;;
-      25.10)
-        iso_url="https://releases.ubuntu.com/25.10/ubuntu-25.10-live-server-amd64.iso"
-        iso_checksum="sha256:dc54870e5261c0abad19f74b8146659d10e625971792bd42d7ecde820b60a1d0"
-        vmid=9500
-        autoinstall_dir="ubuntu-2404/http"
-        template_name="ubuntu-2510-golden"
-        ;;
-      26.04)
-        iso_url="https://releases.ubuntu.com/26.04/ubuntu-26.04-live-server-amd64.iso"
-        iso_checksum="sha256:dec49008a71f6098d0bcfc822021f4d042d5f2db279e4d75bdd981304f1ca5d9"
-        vmid=9200
-        autoinstall_dir="ubuntu-2404/http"
-        template_name="ubuntu-2604-golden"
-        ;;
-      *)
-        echo "ERROR: Unknown version '$version'." >&2
-        echo "       Supported: 24.04  25.10  26.04" >&2
-        exit 1
-        ;;
+      24.04) img_url="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+             vmid=9000; template_name="ubuntu-2404-golden" ;;
+      25.10) img_url="https://cloud-images.ubuntu.com/questing/current/questing-server-cloudimg-amd64.img"
+             vmid=9500; template_name="ubuntu-2510-golden" ;;
+      26.04) img_url="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64.img"
+             vmid=9200; template_name="ubuntu-2604-golden" ;;
+      *)     echo "ERROR: Supported versions: 24.04  25.10  26.04" >&2; exit 1 ;;
     esac
 
     echo ""
-    echo "==> Build plan:"
-    echo "    Node:     $node (build host only — template cloneable to any node)"
+    echo "==> Build plan (cloud image — no ISO installer):"
+    echo "    Node:     $node ($node_host)"
     echo "    Version:  Ubuntu $version"
     echo "    VMID:     $vmid"
     echo "    Template: $template_name"
-    echo "    ISO:      $(basename $iso_url)"
-    echo "    Storage:  prox-iso (shared NAS — ISO uploaded once, reused by all nodes)"
+    echo "    Source:   $img_url"
     echo ""
     if [[ "${YES:-}" != "1" ]]; then
       read -r -p "Proceed? [Y/n]: " confirm
-      confirm="${confirm:-Y}"
-      if [[ ! "$confirm" =~ ^[Yy] ]]; then
-        echo "Aborted."
-        exit 0
-      fi
+      [[ "${confirm:-Y}" =~ ^[Yy] ]] || { echo "Aborted."; exit 0; }
     fi
 
-    echo "==> Building..."
-    # Open UFW ports for Packer's HTTP server (serves autoinstall user-data to the build VM)
-    sudo ufw allow from 10.200.0.0/16 to any port 8802:8810 proto tcp comment "Packer HTTP" &>/dev/null || true
-    cd packer
-    packer init ubuntu.pkr.hcl
-    packer build -force \
-      -var "proxmox_url=https://${PROXMOX_HOST}:8006/api2/json" \
-      -var "proxmox_password=${PROXMOX_PASSWORD}" \
-      -var "proxmox_node=${node}" \
-      -var "template_vmid=${vmid}" \
-      -var "template_name=${template_name}" \
-      -var "iso_url=${iso_url}" \
-      -var "iso_checksum=${iso_checksum}" \
-      -var "autoinstall_dir=${autoinstall_dir}" \
-      ubuntu.pkr.hcl
+    # Write SSH keys file for the template
+    cat > /tmp/ops_template_keys.pub << 'KEYS'
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJVg90BaM7cOzLTseb21By9Js6P83jtsdARzpkMt4UrM mchasse@xnitro
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDGfsIvIbq+jJRBkh0Bisluz+LX4NRDrD2dZcQmQpGZz
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGYrV9NK/7kMb64PycxuqTWduQ1WESKJmWieuOKBzacZ mchasse@storm
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDOIbTIyU3tFeAm2g6L2/lheTc6pg3Ogiof9KuJHbETj mchasse@xeronine.com
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFvNQTfctGIgfAjNsylR+aoLb+CaDLqKAGdl7KcxaG1W mchasse@beast
+KEYS
+
+    # Copy keys to the Proxmox node and run build
+    sshpass -p "${PROXMOX_PASSWORD}" scp -o StrictHostKeyChecking=no \
+      /tmp/ops_template_keys.pub root@${node_host}:/tmp/ops_template_keys.pub
+
+    sshpass -p "${PROXMOX_PASSWORD}" ssh -o StrictHostKeyChecking=no root@${node_host} \
+      VMID=$vmid NAME=$template_name IMG_URL=$img_url bash << 'REMOTE'
+set -e
+echo "==> Removing existing VMID $VMID if present..."
+pvesh set /nodes/$(hostname)/qemu/$VMID/config -template 0 2>/dev/null || true
+qm stop $VMID 2>/dev/null || true
+rm -f /etc/pve/qemu-server/${VMID}.conf 2>/dev/null || true
+lvremove -f pve/vm-${VMID}-disk-0 2>/dev/null || true
+lvremove -f pve/base-${VMID}-disk-0 2>/dev/null || true
+lvremove -f pve/vm-${VMID}-cloudinit 2>/dev/null || true
+
+echo "==> Downloading cloud image..."
+wget -q --show-progress -O /tmp/${NAME}.img "$IMG_URL"
+
+echo "==> Creating VM $VMID ($NAME)..."
+qm create $VMID --name "$NAME" --memory 2048 --balloon 0 --cores 2 --cpu host \
+  --net0 virtio,bridge=vmbr0 --ostype l26 --agent enabled=1 \
+  --tags "template;ubuntu;golden" --description "Ubuntu cloud-image template"
+
+echo "==> Importing disk..."
+qm importdisk $VMID /tmp/${NAME}.img local-lvm --format raw
+
+echo "==> Configuring..."
+qm set $VMID \
+  --scsihw virtio-scsi-pci \
+  --scsi0 "local-lvm:vm-${VMID}-disk-0,cache=writeback,discard=on" \
+  --boot order=scsi0 \
+  --ide2 local-lvm:cloudinit \
+  --serial0 socket --vga serial0 \
+  --ipconfig0 ip=dhcp \
+  --ciuser mchasse \
+  --sshkeys /tmp/ops_template_keys.pub
+
+echo "==> Converting to template..."
+qm template $VMID
+rm -f /tmp/${NAME}.img /tmp/ops_template_keys.pub
+
+echo "==> Done: $NAME (VMID $VMID) ✓"
+qm config $VMID | grep -E "^name:|^template:|^scsi0:|^ide2:"
+REMOTE
+    rm -f /tmp/ops_template_keys.pub
     ;;
   help|"")
     cat << 'EOF'
