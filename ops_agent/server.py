@@ -97,11 +97,15 @@ async def _stream_task(task: str, yes: bool = False, claude: bool = False) -> As
 @app.get("/health")
 async def health():
     """Health check — returns version and status."""
+    from .coordinator import load_config
+    cfg = load_config()
+    ollama_url = cfg.get("ollama_url", "") or os.environ.get("OLLAMA_URL", "")
     return {
         "status": "ok",
         "version": VERSION,
         "auth": "enabled" if API_KEY else "disabled",
-        "ollama": os.environ.get("OLLAMA_URL", "not configured"),
+        "ollama": ollama_url if ollama_url else "not configured",
+        "ollama_model": cfg.get("ollama_model", ""),
     }
 
 
