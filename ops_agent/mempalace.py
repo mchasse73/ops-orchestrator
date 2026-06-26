@@ -25,6 +25,8 @@ class MemPalaceClient:
         self._id = 0
 
     def _call(self, tool: str, arguments: dict) -> Any:
+        if not self.url:
+            return None
         self._id += 1
         payload = {
             "jsonrpc": "2.0",
