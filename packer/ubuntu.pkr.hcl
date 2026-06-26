@@ -69,6 +69,7 @@ source "proxmox-iso" "ubuntu" {
   password                 = var.proxmox_password
   insecure_skip_tls_verify = true
   node                     = var.proxmox_node
+  task_timeout             = "15m"
 
   vm_id   = var.template_vmid
   vm_name = var.template_name
