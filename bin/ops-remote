@@ -60,7 +60,7 @@ def stream_run(server: str, api_key: str, task: str, yes: bool = False, claude: 
     body = json.dumps({"task": task, "yes": yes, "claude": claude}).encode()
     req = urllib.request.Request(url, data=body, headers=_headers(api_key), method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
+        with urllib.request.urlopen(req, timeout=600) as resp:
             buf = b""
             while True:
                 chunk = resp.read(256)
