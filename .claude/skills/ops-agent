@@ -127,6 +127,8 @@ case "$cmd" in
     fi
 
     echo "==> Building..."
+    # Open UFW ports for Packer's HTTP server (serves autoinstall user-data to the build VM)
+    sudo ufw allow from 10.200.0.0/16 to any port 8802:8810 proto tcp comment "Packer HTTP" &>/dev/null || true
     cd packer
     packer init ubuntu.pkr.hcl
     packer build -force \
