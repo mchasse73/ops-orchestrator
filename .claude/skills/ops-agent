@@ -78,7 +78,7 @@ case "$cmd" in
     fi
 
     # Version config — one template per version, single VMID across cluster
-    # VMID scheme: 9000=24.04 LTS, 9100=25.10, 9200=26.04 LTS, ...
+    # VMID scheme: 9000=24.04 LTS, 9500=25.10 (9100 taken by slayerrealms-amp), 9200=26.04 LTS
     case "$version" in
       24.04)
         iso_url="https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso"
@@ -90,7 +90,7 @@ case "$cmd" in
       25.10)
         iso_url="https://releases.ubuntu.com/25.10/ubuntu-25.10-live-server-amd64.iso"
         iso_checksum="sha256:dc54870e5261c0abad19f74b8146659d10e625971792bd42d7ecde820b60a1d0"
-        vmid=9100
+        vmid=9500
         autoinstall_dir="ubuntu-2404/http"
         template_name="ubuntu-2510-golden"
         ;;
@@ -117,11 +117,13 @@ case "$cmd" in
     echo "    ISO:      $(basename $iso_url)"
     echo "    Storage:  prox-iso (shared NAS — ISO uploaded once, reused by all nodes)"
     echo ""
-    read -r -p "Proceed? [Y/n]: " confirm
-    confirm="${confirm:-Y}"
-    if [[ ! "$confirm" =~ ^[Yy] ]]; then
-      echo "Aborted."
-      exit 0
+    if [[ "${YES:-}" != "1" ]]; then
+      read -r -p "Proceed? [Y/n]: " confirm
+      confirm="${confirm:-Y}"
+      if [[ ! "$confirm" =~ ^[Yy] ]]; then
+        echo "Aborted."
+        exit 0
+      fi
     fi
 
     echo "==> Building..."
@@ -148,7 +150,7 @@ ops-orchestrator commands:
   provision         Provision a new VM (guided)
   build-template    Build an Ubuntu golden template on a Proxmox node
 
-Ubuntu versions:  24.04 (LTS, VMID 9000)  25.10 (VMID 9100)  26.04 (LTS, VMID 9200)
+Ubuntu versions:  24.04 (LTS, VMID 9000)  25.10 (VMID 9500)  26.04 (LTS, VMID 9200)
 ISO storage:      prox-iso shared NAS — uploaded once, reused by all nodes
 
 Examples:
