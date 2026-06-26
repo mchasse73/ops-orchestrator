@@ -67,61 +67,23 @@ async def _stream_task(task: str, yes: bool = False, claude: bool = False) -> As
         args.append("--yes")
     args.append(task)
 
+    # Merge stderr into stdout — single pipe, no race conditions
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,  # merge — one stream, no deadlocks
         cwd=str(ROOT),
         env=env,
     )
 
-    # Merge stdout + stderr into a single pipe — simplest reliable streaming
-    assert proc.stdout and proc.stderr
-
-    async def iter_lines():
-        """Yield (stream_type, line) as lines arrive from either pipe."""
-        import asyncio
-
-        async def read_one(coro):
-            try:
-                return await coro
-            except Exception:
-                return None
-
-        out_eof = err_eof = False
-        while not (out_eof and err_eof):
-            tasks = {}
-            if not out_eof:
-                tasks["out"] = asyncio.ensure_future(proc.stdout.readline())
-            if not err_eof:
-                tasks["err"] = asyncio.ensure_future(proc.stderr.readline())
-
-            done, _ = await asyncio.wait(
-                tasks.values(), return_when=asyncio.FIRST_COMPLETED
-            )
-
-            for future in done:
-                raw = future.result()
-                key = next(k for k, v in tasks.items() if v is future)
-                if not raw:
-                    if key == "out":
-                        out_eof = True
-                    else:
-                        err_eof = True
-                else:
-                    line = raw.decode(errors="replace").rstrip()
-                    if line:
-                        yield key, line
-
-            # Cancel any pending tasks to avoid leaks
-            for future in tasks.values():
-                if future not in done:
-                    future.cancel()
-
-    async for stream_type, line in iter_lines():
-        event_type = "output" if stream_type == "out" else "meta"
-        yield f"data: {json.dumps({'type': event_type, 'text': line})}\n\n"
+    assert proc.stdout
+    async for raw in proc.stdout:
+        line = raw.decode(errors="replace").rstrip()
+        if line:
+            # Lines starting with "  [" are meta (turn/cost/router info)
+            event_type = "meta" if line.startswith("  [") or line.startswith("Processing") else "output"
+            yield f"data: {json.dumps({'type': event_type, 'text': line})}\n\n"
 
     await proc.wait()
     yield f"data: {json.dumps({'type': 'done', 'exit_code': proc.returncode})}\n\n"
