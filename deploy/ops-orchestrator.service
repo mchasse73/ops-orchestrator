@@ -1,0 +1,24 @@
+[Unit]
+Description=ops-orchestrator — infrastructure ops agent
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=mchasse
+WorkingDirectory=/opt/ops-orchestrator
+EnvironmentFile=/etc/ops-orchestrator/env
+ExecStart=/opt/ops-orchestrator/.venv/bin/uvicorn ops_agent.server:app \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --workers 2 \
+    --log-level info
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

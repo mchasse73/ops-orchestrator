@@ -1,0 +1,181 @@
+"""ops-orchestrator FastAPI server.
+
+Wraps the coordinator as an HTTP service so any machine on the network can
+run infrastructure tasks without needing local credentials or Ollama.
+
+    uvicorn ops_agent.server:app --host 0.0.0.0 --port 8080
+
+Auth: X-API-Key header — key stored in Vault at secret/ops-orchestrator/api-key
+      Set OPS_API_KEY env var to enable auth. If unset, auth is disabled (dev mode).
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+from typing import AsyncIterator
+
+from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+ROOT = Path(__file__).resolve().parent.parent
+VERSION = (ROOT / "VERSION").read_text().strip() if (ROOT / "VERSION").exists() else "dev"
+
+app = FastAPI(
+    title="ops-orchestrator",
+    description="Infrastructure ops agent — plain-English task runner",
+    version=VERSION,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+API_KEY = os.environ.get("OPS_API_KEY", "")
+
+
+def _check_auth(x_api_key: str | None) -> None:
+    if not API_KEY:
+        return  # auth disabled (dev mode)
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
+
+# ── request/response models ───────────────────────────────────────────────────
+
+class RunRequest(BaseModel):
+    task: str
+    yes: bool = False        # auto-approve destructive actions
+    claude: bool = False     # force Claude (skip Ollama)
+
+
+# ── streaming task runner ─────────────────────────────────────────────────────
+
+async def _stream_task(task: str, yes: bool = False, claude: bool = False) -> AsyncIterator[str]:
+    """Run the coordinator as a subprocess and yield SSE lines."""
+    args = [sys.executable, "-m", "ops_agent.coordinator"]
+    if claude:
+        args.append("--claude")
+    if yes:
+        args.append("--yes")
+    args.append(task)
+
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=str(ROOT),
+    )
+
+    # Stream stdout lines as SSE events
+    assert proc.stdout
+    async for raw in proc.stdout:
+        line = raw.decode(errors="replace").rstrip()
+        if line:
+            yield f"data: {json.dumps({'type': 'output', 'text': line})}\n\n"
+
+    # Collect any stderr (model/cost info)
+    assert proc.stderr
+    stderr = await proc.stderr.read()
+    for line in stderr.decode(errors="replace").splitlines():
+        if line.strip():
+            yield f"data: {json.dumps({'type': 'meta', 'text': line})}\n\n"
+
+    await proc.wait()
+    yield f"data: {json.dumps({'type': 'done', 'exit_code': proc.returncode})}\n\n"
+
+
+# ── endpoints ─────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    """Health check — returns version and status."""
+    return {
+        "status": "ok",
+        "version": VERSION,
+        "auth": "enabled" if API_KEY else "disabled",
+        "ollama": os.environ.get("OLLAMA_URL", "not configured"),
+    }
+
+
+@app.post("/run")
+async def run_task(
+    request: RunRequest,
+    x_api_key: str | None = Header(default=None),
+):
+    """Run a plain-English infrastructure task. Streams output as SSE.
+
+    Example:
+        curl -N -H "X-API-Key: $KEY" https://ops.xeronine.com/run \\
+          -d '{"task": "list all VMs in the cluster"}'
+    """
+    _check_auth(x_api_key)
+    return StreamingResponse(
+        _stream_task(request.task, yes=request.yes, claude=request.claude),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/run")
+async def run_task_get(
+    task: str = Query(..., description="Plain-English task to run"),
+    yes: bool = Query(False),
+    claude: bool = Query(False),
+    x_api_key: str | None = Header(default=None),
+):
+    """GET version of /run for easy browser/curl testing."""
+    _check_auth(x_api_key)
+    return StreamingResponse(
+        _stream_task(task, yes=yes, claude=claude),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/vms")
+async def list_vms(x_api_key: str | None = Header(default=None)):
+    """List all VMs in the cluster (structured JSON, not streamed)."""
+    _check_auth(x_api_key)
+    results = []
+    async for event in _stream_task("List all VMs in the cluster. Return as a plain text table."):
+        if '"type": "output"' in event:
+            data = json.loads(event.replace("data: ", "").strip())
+            results.append(data.get("text", ""))
+    return {"output": "\n".join(results)}
+
+
+@app.get("/nodes")
+async def list_nodes(x_api_key: str | None = Header(default=None)):
+    """List all Proxmox nodes (structured JSON, not streamed)."""
+    _check_auth(x_api_key)
+    results = []
+    async for event in _stream_task("List all Proxmox cluster nodes with status and resource usage."):
+        if '"type": "output"' in event:
+            data = json.loads(event.replace("data: ", "").strip())
+            results.append(data.get("text", ""))
+    return {"output": "\n".join(results)}
+
+
+@app.get("/templates")
+async def list_templates(x_api_key: str | None = Header(default=None)):
+    """List available VM templates."""
+    _check_auth(x_api_key)
+    results = []
+    async for event in _stream_task("List all available VM templates in the cluster."):
+        if '"type": "output"' in event:
+            data = json.loads(event.replace("data: ", "").strip())
+            results.append(data.get("text", ""))
+    return {"output": "\n".join(results)}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")

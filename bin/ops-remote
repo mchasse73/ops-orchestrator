@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""ops-remote — CLI client for the ops-orchestrator server.
+
+Usage:
+    ops-remote "list all VMs"
+    ops-remote --yes "provision a docker host on VLAN 80"
+    ops-remote --claude "add DNS record test.xeronine.local → 10.200.99.50"
+    ops-remote vms
+    ops-remote nodes
+    ops-remote templates
+    ops-remote health
+
+Config (env vars or ~/.config/ops-remote/config):
+    OPS_SERVER    URL of the ops server  (default: http://ops.xeronine.local:8080)
+    OPS_API_KEY   API key                (default: empty)
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+# ── config ────────────────────────────────────────────────────────────────────
+
+DEFAULT_SERVER = "http://ops.xeronine.local:8080"
+CONFIG_FILE = Path.home() / ".config" / "ops-remote" / "config"
+
+
+def load_config() -> dict:
+    cfg = {
+        "server": os.environ.get("OPS_SERVER", DEFAULT_SERVER).rstrip("/"),
+        "api_key": os.environ.get("OPS_API_KEY", ""),
+    }
+    if CONFIG_FILE.exists():
+        for line in CONFIG_FILE.read_text().splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, _, v = line.partition("=")
+                if k.strip() == "OPS_SERVER":
+                    cfg["server"] = v.strip()
+                elif k.strip() == "OPS_API_KEY":
+                    cfg["api_key"] = v.strip()
+    return cfg
+
+
+# ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+def _headers(api_key: str) -> dict:
+    h = {"Content-Type": "application/json"}
+    if api_key:
+        h["X-API-Key"] = api_key
+    return h
+
+
+def stream_run(server: str, api_key: str, task: str, yes: bool = False, claude: bool = False) -> int:
+    """POST /run and stream SSE output to stdout."""
+    url = f"{server}/run"
+    body = json.dumps({"task": task, "yes": yes, "claude": claude}).encode()
+    req = urllib.request.Request(url, data=body, headers=_headers(api_key), method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            buf = b""
+            while True:
+                chunk = resp.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n\n" in buf:
+                    event, buf = buf.split(b"\n\n", 1)
+                    line = event.decode(errors="replace").strip()
+                    if line.startswith("data: "):
+                        try:
+                            d = json.loads(line[6:])
+                            if d.get("type") == "output":
+                                print(d["text"])
+                            elif d.get("type") == "meta":
+                                print(d["text"], file=sys.stderr)
+                            elif d.get("type") == "done":
+                                return d.get("exit_code", 0)
+                        except json.JSONDecodeError:
+                            print(line[6:])
+    except urllib.error.HTTPError as e:
+        print(f"Error: HTTP {e.code} — {e.read().decode()}", file=sys.stderr)
+        return 1
+    except urllib.error.URLError as e:
+        print(f"Error: cannot reach ops server at {server}\n{e}", file=sys.stderr)
+        print("Check OPS_SERVER env var or ~/.config/ops-remote/config", file=sys.stderr)
+        return 1
+    return 0
+
+
+def get_json(server: str, api_key: str, path: str) -> None:
+    url = f"{server}{path}"
+    req = urllib.request.Request(url, headers=_headers(api_key))
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+            if "output" in data:
+                print(data["output"])
+            else:
+                print(json.dumps(data, indent=2))
+    except urllib.error.URLError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+SHORTCUTS = {
+    "vms": "List all VMs in the cluster with their status and node assignment.",
+    "nodes": "List all Proxmox cluster nodes with status and resource usage.",
+    "templates": "List all available VM templates in the cluster.",
+    "provision": None,  # interactive — just pass through
+}
+
+USAGE = f"""\
+ops-remote — remote ops-orchestrator client
+
+Usage:
+  ops-remote [--yes] [--claude] "<task>"
+  ops-remote vms | nodes | templates | health
+
+Options:
+  --yes       Auto-approve destructive actions
+  --claude    Force Claude (bypass Ollama)
+  --server    Override OPS_SERVER for this call
+
+Config:
+  OPS_SERVER   = {DEFAULT_SERVER}
+  OPS_API_KEY  = (set to enable auth)
+  Config file: {CONFIG_FILE}
+
+Examples:
+  ops-remote "list all VMs"
+  ops-remote "provision a docker host on VLAN 80, 4 cores 8GB"
+  ops-remote "add DNS record ops.xeronine.local → 10.200.99.20"
+  ops-remote --yes "resize ops VM to 8 cores"
+  ops-remote vms
+"""
+
+
+def main() -> int:
+    cfg = load_config()
+    args = sys.argv[1:]
+
+    if not args or args[0] in ("-h", "--help"):
+        print(USAGE)
+        return 0
+
+    yes = "--yes" in args
+    claude = "--claude" in args
+    args = [a for a in args if a not in ("--yes", "--claude")]
+
+    # --server override
+    if "--server" in args:
+        idx = args.index("--server")
+        cfg["server"] = args[idx + 1]
+        args = args[:idx] + args[idx + 2:]
+
+    if not args:
+        print(USAGE)
+        return 1
+
+    cmd = args[0]
+
+    if cmd == "health":
+        get_json(cfg["server"], cfg["api_key"], "/health")
+        return 0
+    elif cmd == "vms":
+        get_json(cfg["server"], cfg["api_key"], "/vms")
+        return 0
+    elif cmd == "nodes":
+        get_json(cfg["server"], cfg["api_key"], "/nodes")
+        return 0
+    elif cmd == "templates":
+        get_json(cfg["server"], cfg["api_key"], "/templates")
+        return 0
+    else:
+        task = " ".join(args)
+        return stream_run(cfg["server"], cfg["api_key"], task, yes=yes, claude=claude)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
