@@ -126,6 +126,45 @@ def next_free_vmid() -> str:
     return f"next free VMID: {vmid}"
 
 
+@mcp.tool(annotations={"readOnlyHint": True})
+def list_templates() -> str:
+    """List all VM templates available in the cluster (template=1).
+    Use this to find the right template VMID and node before calling clone_template.
+
+    Current golden templates:
+      VMID 9000  ubuntu-2404-golden  (Ubuntu 24.04 LTS)  — on prox1
+      VMID 9500  ubuntu-2510-golden  (Ubuntu 25.10)      — on prox2
+      VMID 9200  ubuntu-2604-golden  (Ubuntu 26.04 LTS)  — on prox3
+    """
+    resources = _get("/api2/json/cluster/resources", {"type": "vm"})
+    templates = [r for r in resources if r.get("template") == 1]
+    if not templates:
+        return "(no templates found)"
+    lines = []
+    for t in sorted(templates, key=lambda x: x.get("vmid", 0)):
+        lines.append(
+            f"vmid={t.get('vmid', '?'):5}  {t.get('name', '(unnamed)'):28}  "
+            f"node={t.get('node', '?'):8}  status={t.get('status', '?')}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool(annotations={"readOnlyHint": True})
+def wait_for_task(node: str, upid: str, timeout_s: int = 120) -> str:
+    """Poll a Proxmox task (UPID) until it finishes or timeout is reached.
+    Use after clone_template to confirm the clone completed before configuring the VM."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        status = _get(f"/api2/json/nodes/{node}/tasks/{upid}/status")
+        if status.get("status") == "stopped":
+            exit_status = status.get("exitstatus", "")
+            if exit_status == "OK":
+                return f"task {upid} completed successfully"
+            return f"task {upid} finished with status: {exit_status}"
+        time.sleep(5)
+    return f"timeout after {timeout_s}s — task {upid} still running; check manually"
+
+
 # ── mutating tools (trigger the confirm gate) ─────────────────────────────────
 
 @mcp.tool()
