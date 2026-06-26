@@ -123,8 +123,8 @@ source "proxmox-iso" "ubuntu" {
   communicator           = "ssh"
   ssh_username           = "mchasse"
   ssh_private_key_file   = "~/.ssh/id_ed25519"
-  ssh_timeout            = "30m"
-  ssh_handshake_attempts = 300
+  ssh_timeout            = "45m"
+  ssh_handshake_attempts = 500
 
   template_description = "Ubuntu golden template — built by Packer"
 }
