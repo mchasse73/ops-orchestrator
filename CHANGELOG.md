@@ -4,6 +4,31 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com) conven
 
 ## [Unreleased]
 
+### Added
+- FastAPI HTTP server (`ops_agent/server.py`) — wraps coordinator as a network service
+- SSE streaming for `/run` endpoint — output streams line by line as model generates
+- `/setup.sh` endpoint — one-command bootstrap for any Linux machine on the network
+- `bin/ops-remote` CLI client — pure stdlib Python, no pip dependencies required
+- `deploy/install.sh` — full deployment script for the ops server
+- `deploy/ops-orchestrator.service` — systemd unit for auto-start and restart
+- `ops.xeronine.local` VM provisioned (VMID 101, 10.200.99.20, Ubuntu 24.04, 4c/8GB/40GB)
+- Ubuntu cloud image template builds via SSH+qm (replaces Packer ISO approach)
+  - VMID 9000: ubuntu-2404-golden (Noble), VMID 9200: ubuntu-2604-golden (Resolute),
+    VMID 9500: ubuntu-2510-golden (Questing) — all on prox2 via cloud-images.ubuntu.com
+- DNS record: `ops.xeronine.local → 10.200.99.20`, `ai.xeronine.local → 10.200.70.25`
+
+### Changed
+- `build-template` command switched from Packer ISO install to Ubuntu cloud image import
+  — 5 min build vs 30+ min ISO install; no boot command injection, no SSH timeout issues
+- System prompt tightened to prevent model hallucinating extra actions beyond stated task
+- MemPalace search limit reduced to 3 results (was 5) to reduce confusing context injection
+
+### Fixed
+- SSE streaming: `stdin=DEVNULL` prevents confirm gate from hanging the stream
+- SSE streaming: merged stdout+stderr into single pipe — eliminates dual-pipe deadlock
+- `PYTHONUNBUFFERED=1` env on coordinator subprocess — immediate stdout flush
+- `health` endpoint reads `ollama_url` from config.yaml not env var
+
 ## [1.0.0] - 2026-06-26
 
 ### Added
