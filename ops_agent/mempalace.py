@@ -93,8 +93,11 @@ class MemPalaceClient:
 
         Returns a formatted string ready to inject into the system prompt.
         Returns empty string if MemPalace is unreachable or nothing relevant found.
+
+        Note: MemPalace context is background reference only — the agent must
+        not act on recalled facts unless explicitly instructed in the current task.
         """
-        results = self.search(task, limit=5)
+        results = self.search(task, limit=3)
         if not results or results.strip() in ("", "[]", "{}"):
             return ""
         return f"## Prior context from MemPalace\n{results}\n"

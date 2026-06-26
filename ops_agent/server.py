@@ -68,11 +68,14 @@ async def _stream_task(task: str, yes: bool = False, claude: bool = False) -> As
     args.append(task)
 
     # Merge stderr into stdout — single pipe, no race conditions
+    # stdin=DEVNULL so the confirm gate gets EOF immediately and auto-denies
+    # (use --yes flag on the request to auto-approve destructive actions)
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     proc = await asyncio.create_subprocess_exec(
         *args,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,  # merge — one stream, no deadlocks
+        stderr=asyncio.subprocess.STDOUT,
         cwd=str(ROOT),
         env=env,
     )
